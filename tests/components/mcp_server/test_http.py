@@ -424,3 +424,139 @@ async def test_get_unknwon_prompt(
     async with mcp_session(mcp_sse_url, hass_supervisor_access_token) as session:
         with pytest.raises(McpError):
             await session.get_prompt(name="Unknown")
+
+
+async def test_streamable_initialize(
+    hass: HomeAssistant,
+    setup_integration: None,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """Test the streamable endpoint initialization."""
+    client = await hass_client()
+
+    # Send initialize request
+    resp = await client.post(
+        "/mcp_server/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        },
+    )
+
+    assert resp.status == HTTPStatus.OK
+    data = await resp.json()
+    assert data["jsonrpc"] == "2.0"
+    assert data["id"] == 1
+    assert "result" in data
+    assert "session_id" in data["result"]
+    assert data["result"]["protocolVersion"] == "2025-03-26"
+
+
+async def test_streamable_ndjson_batch(
+    hass: HomeAssistant,
+    setup_integration: None,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """Test the streamable endpoint with NDJSON batch requests."""
+    client = await hass_client()
+
+    # Initialize session first
+    init_resp = await client.post(
+        "/mcp_server/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+        },
+    )
+    init_data = await init_resp.json()
+    session_id = init_data["result"]["session_id"]
+
+    # Send batch request with NDJSON accept header
+    resp = await client.post(
+        "/mcp_server/mcp",
+        headers={
+            "Mcp-Session-Id": session_id,
+            "Accept": "application/x-ndjson",
+        },
+        json=[
+            {"jsonrpc": "2.0", "id": 2, "method": "test1"},
+            {"jsonrpc": "2.0", "id": 3, "method": "test2"},
+        ],
+    )
+
+    assert resp.status == HTTPStatus.OK
+    assert resp.content_type == "application/x-ndjson"
+
+    # Read NDJSON responses
+    text = await resp.text()
+    lines = [line for line in text.split("\n") if line]
+    assert len(lines) == 2
+
+    response1 = json.loads(lines[0])
+    assert response1["jsonrpc"] == "2.0"
+    assert response1["id"] == 2
+
+    response2 = json.loads(lines[1])
+    assert response2["jsonrpc"] == "2.0"
+    assert response2["id"] == 3
+
+
+async def test_streamable_missing_session(
+    hass: HomeAssistant,
+    setup_integration: None,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """Test the streamable endpoint with missing session ID."""
+    client = await hass_client()
+
+    resp = await client.post(
+        "/mcp_server/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "test"},
+    )
+
+    assert resp.status == HTTPStatus.BAD_REQUEST
+
+
+async def test_streamable_delete_session(
+    hass: HomeAssistant,
+    setup_integration: None,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """Test deleting a streamable session."""
+    client = await hass_client()
+
+    # Initialize session
+    init_resp = await client.post(
+        "/mcp_server/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+        },
+    )
+    init_data = await init_resp.json()
+    session_id = init_data["result"]["session_id"]
+
+    # Delete session
+    resp = await client.delete(
+        "/mcp_server/mcp",
+        headers={"Mcp-Session-Id": session_id},
+    )
+
+    assert resp.status == HTTPStatus.NO_CONTENT
+
+    # Verify session is gone
+    resp = await client.post(
+        "/mcp_server/mcp",
+        headers={"Mcp-Session-Id": session_id},
+        json={"jsonrpc": "2.0", "id": 2, "method": "test"},
+    )
+
+    assert resp.status == HTTPStatus.NOT_FOUND

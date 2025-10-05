@@ -8,6 +8,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from . import http
 from .const import DOMAIN
+from .event_store import MCPEventStore
 from .session import SessionManager
 from .types import MCPServerConfigEntry
 
@@ -25,6 +26,11 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Model Context Protocol component."""
     http.async_register(hass)
+
+    # Initialize event store for streamable endpoint
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN]["event_store"] = MCPEventStore(hass)
+
     return True
 
 

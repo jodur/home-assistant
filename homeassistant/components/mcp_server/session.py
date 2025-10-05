@@ -49,12 +49,50 @@ class SessionManager:
             if session_id in self._sessions:  # close() may have already been called
                 self._sessions.pop(session_id)
 
+    def create_streamable_session(self) -> str:
+        """Create a new streamable session (without SSE streams).
+
+        Returns:
+            The session identifier.
+        """
+        session_id = ulid_util.ulid_now()
+        _LOGGER.debug("Creating streamable session: %s", session_id)
+        # For streamable sessions, we don't need the read_stream_writer
+        # Just track that the session exists
+        # We'll use None as a placeholder to indicate streamable session
+        self._sessions[session_id] = None  # type: ignore[assignment]
+        return session_id
+
     def get(self, session_id: str) -> Session | None:
-        """Get an existing session."""
+        """Get an existing session.
+
+        Returns the session if it exists, or None for a streamable session
+        (which is valid), or None if the session doesn't exist.
+        """
         return self._sessions.get(session_id)
+
+    def has_session(self, session_id: str) -> bool:
+        """Check if a session exists (works for both SSE and streamable sessions).
+
+        Returns:
+            True if the session exists, False otherwise.
+        """
+        return session_id in self._sessions
+
+    def terminate_streamable_session(self, session_id: str) -> None:
+        """Terminate a streamable session.
+
+        Args:
+            session_id: The session identifier to terminate.
+        """
+        if session_id in self._sessions:
+            _LOGGER.debug("Terminating streamable session: %s", session_id)
+            self._sessions.pop(session_id)
 
     def close(self) -> None:
         """Close any open sessions."""
         for session in self._sessions.values():
-            session.read_stream_writer.close()
+            # Streamable sessions are stored as None, skip them
+            if session is not None:
+                session.read_stream_writer.close()
         self._sessions.clear()
